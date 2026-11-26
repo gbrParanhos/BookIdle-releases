@@ -32,9 +32,9 @@ public sealed record ExtensionUpdate(string Name, string Installed, string Lates
 /// </summary>
 public sealed class AppUpdater
 {
-    /// <summary>O repositório (público) onde as versões são publicadas.</summary>
-    public const string RepoUrl = "https://github.com/PatrickKenji/BookIdle-releases";
-    private const string LatestApi = "https://api.github.com/repos/PatrickKenji/BookIdle-releases/releases/latest";
+    /// <summary>O repositório (público) onde as versões desta build são publicadas (o fork com as melhorias).</summary>
+    public const string RepoUrl = "https://github.com/gbrParanhos/BookIdle-releases";
+    private const string LatestApi = "https://api.github.com/repos/gbrParanhos/BookIdle-releases/releases/latest";
 
     private static readonly HttpClient Http = CreateClient();
 
