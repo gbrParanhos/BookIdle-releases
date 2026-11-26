@@ -14,7 +14,7 @@
     <ApplicationIcon>Resources\AppIcon.ico</ApplicationIcon>
     <!-- Versão do app (o script de lançamento troca por -p:Version=x.y.z); aparece na bandeja e decide as atualizações. -->
     <Version>1.0.0</Version>
-    <!-- O Velopack precisa rodar no começo do Main: o App ganha um Main próprio (App.xaml.cs). -->
+    <!-- O App tem um Main próprio (App.xaml.cs). -->
     <StartupObject>IdleDeck.App.App</StartupObject>
   </PropertyGroup>
 
@@ -48,7 +48,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
-    <PackageReference Include="Velopack" Version="1.2.161" />
   </ItemGroup>
 
   <ItemGroup>

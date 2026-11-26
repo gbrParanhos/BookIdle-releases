@@ -32,6 +32,19 @@ public sealed class LivesModule(IModuleHostServices host) : IModuleView
 
     public void OnMessage(int accountIndex, JsonElement data) { }
 
+    /// <summary>
+    /// Abre a página do canal (para resgatar pontos) numa janela logada com a conta da coluna
+    /// <paramref name="accountIndex"/> da última tabela lida (mesma ordem de <see cref="ReadTwitchAsync"/>/<see cref="ReadKickAsync"/>).
+    /// </summary>
+    public void OpenChannel(bool kick, int accountIndex, string channel)
+    {
+        var accounts = host.ContasDasLives().Where(a => (kick ? a.KickLogin : a.TwitchLogin) is not null).ToList();
+        if (accountIndex < 0 || accountIndex >= accounts.Count) return;
+        var info = accounts[accountIndex];
+        var url = kick ? "https://kick.com/" + Uri.EscapeDataString(channel) : "https://www.twitch.tv/" + Uri.EscapeDataString(channel);
+        _ = host.AbrirPaginaNaContaAsync(info.ProfileName, $"{(kick ? "Kick" : "Twitch")} · {channel}", url);
+    }
+
     public event EventHandler? ContasMudaram
     {
         add => host.ContasMudaram += value;

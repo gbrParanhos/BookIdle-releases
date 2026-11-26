@@ -27,6 +27,9 @@ public static class AppPaths
     public static string VaultFile => Path.Combine(Root, "vault.dat");
     public static string WebViewData => Path.Combine(Root, "WebView2");
 
+    /// <summary>Extensões descompactadas (uma subpasta com manifest.json cada), carregadas em todas as contas.</summary>
+    public static string ExtensionsDir => Path.Combine(Root, "extensions");
+
     /// <summary>
     /// Devolve a pasta a usar. Se só existe a antiga, move para a nova (tudo ou nada: o Windows recusa o movimento se algo ali
     /// estiver aberto, e então continuamos na antiga para não perder nada). Nunca sobrescreve uma pasta nova que já exista.

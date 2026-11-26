@@ -125,25 +125,19 @@ public partial class MainWindow : Window, IModuleHostServices
     /// <summary>Aberto pelo início com o Windows: carrega as contas e vai direto para a bandeja.</summary>
     public bool StartInTray { get; set; }
 
-    // ---------- Atualização automática ----------
+    // ---------- Aviso de versão nova (build própria: só avisa, nunca baixa nem instala) ----------
 
     private readonly Updates.AppUpdater _updater = new();
-    private Velopack.UpdateInfo? _pendingUpdate;
     private string? _declinedVersion;
+    private readonly HashSet<string> _declinedExtensions = [];
     private bool _checkingUpdate;
 
-    /// <summary>Uma atualização foi baixada e o app vai se trocar ao fechar.</summary>
-    public bool HasPendingUpdate => _pendingUpdate is not null;
-
-    public void ApplyPendingUpdate()
-    {
-        if (_pendingUpdate is { } update) _updater.ApplyAndRestart(update);
-    }
-
-    /// <summary>Procura versão nova 30 s depois de abrir e de hora em hora (só se o app foi instalado pelo instalador).</summary>
+    /// <summary>
+    /// Procura versão nova do BookIdle (GitHub) e das extensões (Chrome Web Store) 30 s depois de abrir e de hora em hora.
+    /// Só consulta; não baixa nada.
+    /// </summary>
     private void StartUpdateChecks()
     {
-        if (!_updater.Configured || !_updater.Installed) return;
         var first = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         first.Tick += (_, _) => { first.Stop(); _ = CheckForUpdateAsync(manual: false); };
         first.Start();
@@ -156,48 +150,82 @@ public partial class MainWindow : Window, IModuleHostServices
     private async Task CheckForUpdateAsync(bool manual)
     {
         if (_checkingUpdate) return;
-        if (!_updater.Configured || !_updater.Installed)
-        {
-            if (manual)
-                ArcadeDialog.Show(this, Loc.T("Atualizações"), _updater.Configured
-                    ? Loc.T("Esta cópia do BookIdle não foi instalada pelo instalador, então não se atualiza sozinha.")
-                    : Loc.T("A atualização automática ainda não foi configurada nesta versão."));
-            return;
-        }
-
         _checkingUpdate = true;
         try
         {
-            var update = await _updater.CheckAsync();
-            if (update is null)
-            {
-                if (manual) ArcadeDialog.Show(this, Loc.T("Atualizações"), Loc.T("Você já está na versão mais recente ({0}).", Updates.AppVersion.Current));
-                return;
-            }
+            var appUpToDate = await CheckAppUpdateAsync(manual);
+            var extensionsUpToDate = await CheckExtensionUpdatesAsync(manual);
+            if (manual && appUpToDate && extensionsUpToDate)
+                ArcadeDialog.Show(this, Loc.T("Atualizações"),
+                    $"Você já está na versão mais recente ({Updates.AppVersion.Current}), e as extensões também.");
+        }
+        finally { _checkingUpdate = false; }
+    }
 
-            var version = Updates.AppUpdater.VersionOf(update);
-            if (!manual && _declinedVersion == version) return; // já disse "agora não" para esta; não insiste até reabrir
+    /// <summary>Extensões: avisa as que têm versão nova. Devolve true se não há nada novo (ou se não conseguiu ver).</summary>
+    private async Task<bool> CheckExtensionUpdatesAsync(bool manual)
+    {
+        try
+        {
+            var updates = await _updater.CheckExtensionsAsync();
+            if (updates.Count == 0) return true;
+            var pending = manual ? updates : updates.Where(u => !_declinedExtensions.Contains(u.StoreUrl + "@" + u.Latest)).ToList();
+            if (pending.Count == 0) return false;
+
             ShowFromTray();
-            var message = Updates.AppUpdater.NotesOf(update) is { } notes
-                ? Loc.T("Há uma versão nova do BookIdle ({0}); esta é a {1}.\n\nO que muda:\n{2}\n\nAtualizar agora? O app fecha e abre de novo sozinho, e as contas continuam logadas.", version, Updates.AppVersion.Current, notes.Summary)
-                : Loc.T("Há uma versão nova do BookIdle ({0}); esta é a {1}.\n\nAtualizar agora? O app fecha e abre de novo sozinho, e as contas continuam logadas.", version, Updates.AppVersion.Current);
-            if (!ArcadeDialog.Show(this, Loc.T("Atualização disponível"), message, ArcadeDialogButtons.YesNo, buttonsText: (Loc.T("Atualizar"), Loc.T("Agora não")), guarded: true))
+            var list = string.Join("\n", pending.Select(u => $"• {u.Name}: {u.Installed} → {u.Latest}"));
+            var message = $"Há versão nova de extensão:\n{list}\n\n"
+                + "As extensões do BookIdle NÃO se atualizam sozinhas. Para atualizar, baixe e revise o código da versão nova "
+                + $"e troque a pasta dela em {IdleDeck.Core.AppPaths.ExtensionsDir}.\n\nAbrir a página na Chrome Web Store?";
+            if (ArcadeDialog.Show(this, "Extensão: atualização disponível", message, ArcadeDialogButtons.YesNo,
+                    buttonsText: ("Abrir na loja", Loc.T("Agora não")), guarded: true))
             {
-                _declinedVersion = version;
-                return;
+                foreach (var u in pending)
+                {
+                    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(u.StoreUrl) { UseShellExecute = true }); }
+                    catch (Exception e) { App.Log(e); }
+                }
             }
+            foreach (var u in pending) _declinedExtensions.Add(u.StoreUrl + "@" + u.Latest);
+            return false;
+        }
+        catch (Exception e)
+        {
+            App.Log(e);
+            if (manual) ArcadeDialog.Show(this, Loc.T("Atualizações"), $"Não consegui verificar as extensões agora:\n{e.Message}", kind: ArcadeDialogKind.Warning);
+            return false;
+        }
+    }
 
-            _tray.Notify("BookIdle", Loc.T("Baixando a versão {0}…", version));
-            await _updater.DownloadAsync(update);
-            _pendingUpdate = update;
-            ExitApp(); // fecha direito (salva e solta os navegadores); o Closed do App aplica a troca
+    /// <summary>BookIdle: avisa se há versão nova. Devolve true se já está na mais recente.</summary>
+    private async Task<bool> CheckAppUpdateAsync(bool manual)
+    {
+        try
+        {
+            var update = await _updater.CheckAsync();
+            if (update is null) return true;
+
+            if (!manual && _declinedVersion == update.Version) return false; // já disse "agora não" para esta; não insiste até reabrir
+            ShowFromTray();
+            var notes = Updates.AppUpdater.NotesOf(update) is { } n ? "\n\nO que muda:\n" + n.Summary : "";
+            var message = $"Há uma versão nova do BookIdle ({update.Version}); esta é a {Updates.AppVersion.Current}.{notes}\n\n"
+                + "Esta cópia foi compilada a partir do código-fonte e NÃO se atualiza sozinha. "
+                + "Para atualizar, revise o código da versão nova e compile de novo.\n\nAbrir a página da versão no GitHub?";
+            if (ArcadeDialog.Show(this, Loc.T("Atualização disponível"), message, ArcadeDialogButtons.YesNo,
+                    buttonsText: ("Abrir no GitHub", Loc.T("Agora não")), guarded: true))
+            {
+                try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(update.PageUrl) { UseShellExecute = true }); }
+                catch (Exception e) { App.Log(e); }
+            }
+            _declinedVersion = update.Version;
+            return false;
         }
         catch (Exception e)
         {
             App.Log(e);
             if (manual) ArcadeDialog.Show(this, Loc.T("Atualizações"), Loc.T("Não consegui verificar agora:\n{0}", e.Message), kind: ArcadeDialogKind.Warning);
+            return false;
         }
-        finally { _checkingUpdate = false; }
     }
 
     // ---------- O que mudou (depois de atualizar) ----------
@@ -1712,6 +1740,13 @@ public partial class MainWindow : Window, IModuleHostServices
         var view = _views.FirstOrDefault(v => v.Config.ProfileName == profileName);
         if (view?.Core is not { } core || view.Config.KickLogin is null) return null;
         return await ReadKickTokenAsync(core);
+    }
+
+    public async Task AbrirPaginaNaContaAsync(string profileName, string titulo, string url)
+    {
+        var view = _views.FirstOrDefault(v => v.Config.ProfileName == profileName);
+        if (view is null || _host is null) return;
+        await AccountWebWindow.OpenAsync(this, _host, view, titulo, url);
     }
 
     public IReadOnlyList<int> TodasAsContasDoJogo(string host) =>

@@ -1,3 +1,4 @@
+using System.IO;
 using IdleDeck.Core;
 using IdleDeck.Core.Settings;
 using Microsoft.Web.WebView2.Core;
@@ -54,5 +55,53 @@ public sealed class BrowserHost
         };
         var env = await CoreWebView2Environment.CreateAsync(null, AppPaths.WebViewData, options);
         return new BrowserHost(env, settings.DisableBackgroundThrottling, settings.ExtensionsEnabled, settings.UseGpu);
+    }
+
+    /// <summary>IDs das extensões que o próprio app instalou (só essas ele remove; as internas do navegador ficam).</summary>
+    private static string LoadedIdsFile => Path.Combine(AppPaths.Root, "extensions-loaded.txt");
+
+    /// <summary>
+    /// Carrega no perfil da conta as extensões de <see cref="AppPaths.ExtensionsDir"/> (cada subpasta com manifest.json).
+    /// Recarrega a cada abertura, para o perfil sempre usar o código que está na pasta. Extensões que o app instalou antes
+    /// e não estão mais na pasta são removidas. Só roda com "Permitir extensões do navegador" ligado.
+    /// </summary>
+    public async Task LoadExtensionsAsync(CoreWebView2Profile profile)
+    {
+        if (!ExtensionsEnabled) return;
+        try
+        {
+            Directory.CreateDirectory(AppPaths.ExtensionsDir);
+            var folders = Directory.GetDirectories(AppPaths.ExtensionsDir)
+                .Where(d => File.Exists(Path.Combine(d, "manifest.json")))
+                .ToList();
+
+            var ours = File.Exists(LoadedIdsFile)
+                ? File.ReadAllLines(LoadedIdsFile).Select(l => l.Trim()).Where(l => l.Length > 0).ToHashSet()
+                : [];
+            foreach (var installed in await profile.GetBrowserExtensionsAsync())
+            {
+                if (!ours.Contains(installed.Id)) continue;
+                try { await installed.RemoveAsync(); }
+                catch (Exception e) when (e is System.Runtime.InteropServices.COMException or InvalidOperationException) { App.Log(e); }
+            }
+
+            foreach (var folder in folders)
+            {
+                try
+                {
+                    var added = await profile.AddBrowserExtensionAsync(folder);
+                    ours.Add(added.Id);
+                }
+                catch (Exception e) when (e is ArgumentException or System.Runtime.InteropServices.COMException or InvalidOperationException)
+                {
+                    App.Log(new InvalidOperationException($"Extensão não carregou: {folder}", e));
+                }
+            }
+            File.WriteAllLines(LoadedIdsFile, ours);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Runtime.InteropServices.COMException)
+        {
+            App.Log(e);
+        }
     }
 }

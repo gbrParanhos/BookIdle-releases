@@ -429,6 +429,7 @@ public sealed class AccountView : DockPanel
         await _web.EnsureCoreWebView2Async(host.Environment, options);
 
         var core = _web.CoreWebView2;
+        await host.LoadExtensionsAsync(core.Profile); // antes de navegar: os scripts da extensão rodam em document_start
         core.Settings.IsStatusBarEnabled = false;
         core.Settings.IsGeneralAutofillEnabled = false;
         core.Settings.IsPasswordAutosaveEnabled = false;

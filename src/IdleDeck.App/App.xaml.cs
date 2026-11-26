@@ -4,7 +4,6 @@ using System.Windows;
 using System.Windows.Threading;
 using IdleDeck.Core;
 using IdleDeck.Core.Settings;
-using Velopack;
 
 namespace IdleDeck.App;
 
@@ -13,15 +12,10 @@ public partial class App : Application
     /// <summary>Esta é a cópia de TESTE (aberta com dados separados, BOOKIDLE_HOME): a janela e a bandeja avisam.</summary>
     public static bool IsTestCopy => !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(AppPaths.HomeVariable));
 
-    /// <summary>
-    /// O Velopack trata os argumentos de instalação/atualização (--veloapp-*) e sai; no uso normal volta na hora.
-    /// Por isso roda antes de qualquer coisa do WPF. Uma versão baixada e não aplicada NÃO entra sozinha ao abrir:
-    /// o app só se atualiza depois do "Atualizar" no aviso.
-    /// </summary>
+    /// <summary>Build própria: sem Velopack (o app nunca se atualiza sozinho; só avisa que há versão nova).</summary>
     [STAThread]
     public static void Main(string[] args)
     {
-        VelopackApp.Build().SetAutoApplyOnStartup(false).Run();
         var app = new App();
         app.InitializeComponent();
         app.Run();
@@ -80,11 +74,6 @@ public partial class App : Application
             {
                 SingleInstance.Release();
                 Process.Start(Environment.ProcessPath!);
-            }
-            else if (window.HasPendingUpdate)
-            {
-                SingleInstance.Release();
-                window.ApplyPendingUpdate(); // fecha, troca os arquivos e abre a versão nova
             }
             Shutdown();
         };

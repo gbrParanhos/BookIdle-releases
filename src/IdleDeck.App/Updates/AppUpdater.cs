@@ -1,12 +1,13 @@
 using System.IO;
+using System.Net.Http;
 using System.Reflection;
+using System.Text.Json;
+using IdleDeck.Core;
 using IdleDeck.Core.Updates;
-using Velopack;
-using Velopack.Sources;
 
 namespace IdleDeck.App.Updates;
 
-/// <summary>A versão deste BookIdle (a que o script de lançamento gravou no executável).</summary>
+/// <summary>A versão deste BookIdle (a que foi gravada no executável com -p:Version=x.y.z).</summary>
 public static class AppVersion
 {
     public static string Current { get; } = Read();
@@ -19,50 +20,99 @@ public static class AppVersion
     }
 }
 
+/// <summary>Uma versão publicada no GitHub: o número e a página dela.</summary>
+public sealed record AvailableUpdate(string Version, string PageUrl, string? NotesMarkdown);
+
+/// <summary>Uma extensão da pasta extensions com versão nova na Chrome Web Store.</summary>
+public sealed record ExtensionUpdate(string Name, string Installed, string Latest, string StoreUrl);
+
 /// <summary>
-/// Atualização automática (Velopack): olha as "Releases" do repositório do GitHub, baixa só o que mudou e reinicia o app.
-/// Só funciona no app INSTALADO pelo Setup.exe; rodando do Visual Studio / pasta de compilação ela fica inativa.
+/// Build própria: SÓ AVISA. Consulta a última release do repositório no GitHub e diz se há versão nova;
+/// nunca baixa nem instala nada. Para atualizar, revise o código novo e compile de novo.
 /// </summary>
 public sealed class AppUpdater
 {
-    /// <summary>
-    /// O repositório (público) onde os instaladores são publicados, ex.: <c>https://github.com/seu-usuario/BookIdle-releases</c>.
-    /// Vazio = atualização desligada (o app funciona igual, só não procura versão nova).
-    /// </summary>
+    /// <summary>O repositório (público) onde as versões são publicadas.</summary>
     public const string RepoUrl = "https://github.com/PatrickKenji/BookIdle-releases";
+    private const string LatestApi = "https://api.github.com/repos/PatrickKenji/BookIdle-releases/releases/latest";
 
-    private readonly UpdateManager? _manager;
+    private static readonly HttpClient Http = CreateClient();
 
-    /// <summary>Variável de ambiente que troca a origem das atualizações (pasta ou endereço) — para testar sem publicar.</summary>
-    public const string SourceVariable = "BOOKIDLE_UPDATE_SOURCE";
-
-    public AppUpdater()
+    private static HttpClient CreateClient()
     {
-        var test = Environment.GetEnvironmentVariable(SourceVariable);
-        if (!string.IsNullOrWhiteSpace(test)) _manager = new UpdateManager(test);
-        else if (RepoUrl.Length > 0) _manager = new UpdateManager(new GithubSource(RepoUrl, null, false));
+        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("BookIdle-update-check");
+        http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+        return http;
     }
 
-    /// <summary>O endereço das atualizações já foi definido no código.</summary>
-    public bool Configured => _manager is not null;
+    /// <summary>A versão nova, ou null se esta já é a mais recente.</summary>
+    public async Task<AvailableUpdate?> CheckAsync()
+    {
+        using var doc = JsonDocument.Parse(await Http.GetStringAsync(LatestApi));
+        var root = doc.RootElement;
+        var tag = root.GetProperty("tag_name").GetString() ?? "";
+        var latest = tag.TrimStart('v', 'V');
+        if (!Version.TryParse(latest, out var latestVersion)) return null;
+        if (Version.TryParse(AppVersion.Current, out var current) && latestVersion <= current) return null;
 
-    /// <summary>Este programa foi instalado pelo instalador (só assim ele consegue se atualizar).</summary>
-    public bool Installed => _manager?.IsInstalled == true;
+        var page = root.TryGetProperty("html_url", out var url) && url.GetString() is { } u
+                   && u.StartsWith(RepoUrl + "/", StringComparison.OrdinalIgnoreCase)
+            ? u
+            : RepoUrl + "/releases";
+        var notes = root.TryGetProperty("body", out var body) ? body.GetString() : null;
+        return new AvailableUpdate(latest, page, notes);
+    }
 
-    /// <summary>A versão nova, ou null se já está na mais recente.</summary>
-    public async Task<UpdateInfo?> CheckAsync() =>
-        _manager is null ? null : await _manager.CheckForUpdatesAsync();
+    // ---------- Extensões (pasta extensions) ----------
 
-    public Task DownloadAsync(UpdateInfo update, Action<int>? progress = null) =>
-        _manager is null ? Task.CompletedTask : _manager.DownloadUpdatesAsync(update, progress);
+    /// <summary>Arquivo, dentro da pasta da extensão, com o ID dela na Chrome Web Store (32 letras a–p).</summary>
+    public const string StoreIdFile = "store-id.txt";
+    private const string StoreCheckUrl =
+        "https://clients2.google.com/service/update2/crx?response=updatecheck&prodversion=131.0&acceptformat=crx2,crx3&x=id%3D{0}%26v%3D0.0.0%26uc";
 
-    /// <summary>Fecha o app, aplica a versão baixada e abre de novo.</summary>
-    public void ApplyAndRestart(UpdateInfo update) => _manager?.ApplyUpdatesAndRestart(update);
+    /// <summary>
+    /// Extensões da pasta <see cref="AppPaths.ExtensionsDir"/> que têm versão nova na Chrome Web Store. Só consulta a
+    /// versão publicada; nunca baixa a extensão. Pastas sem <see cref="StoreIdFile"/> ficam de fora. Uma extensão que
+    /// falhar não impede as outras; se TODAS falharem, lança o erro (para a verificação manual mostrar).
+    /// </summary>
+    public async Task<List<ExtensionUpdate>> CheckExtensionsAsync()
+    {
+        var result = new List<ExtensionUpdate>();
+        if (!Directory.Exists(AppPaths.ExtensionsDir)) return result;
+        Exception? lastError = null;
+        var checkedAny = false;
+        foreach (var folder in Directory.GetDirectories(AppPaths.ExtensionsDir))
+        {
+            var idFile = Path.Combine(folder, StoreIdFile);
+            var manifestFile = Path.Combine(folder, "manifest.json");
+            if (!File.Exists(idFile) || !File.Exists(manifestFile)) continue;
+            try
+            {
+                var id = (await File.ReadAllTextAsync(idFile)).Trim().ToLowerInvariant();
+                if (id.Length != 32 || id.Any(c => c is < 'a' or > 'p')) continue;
+                using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(manifestFile));
+                var name = manifest.RootElement.TryGetProperty("name", out var n) ? n.GetString() ?? id : id;
+                var installed = manifest.RootElement.GetProperty("version").GetString() ?? "0";
 
-    public static string VersionOf(UpdateInfo update) => update.TargetFullRelease.Version.ToString();
+                var xml = System.Xml.Linq.XDocument.Parse(await Http.GetStringAsync(string.Format(StoreCheckUrl, id)));
+                var latest = xml.Descendants().FirstOrDefault(e => e.Name.LocalName == "updatecheck")?.Attribute("version")?.Value;
+                checkedAny = true;
+                if (latest is not null && Version.TryParse(latest, out var lv) && Version.TryParse(installed, out var iv) && lv > iv)
+                    result.Add(new ExtensionUpdate(name, installed, latest, "https://chromewebstore.google.com/detail/" + id));
+            }
+            catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or JsonException
+                                          or System.Xml.XmlException or KeyNotFoundException or InvalidOperationException)
+            {
+                lastError = e;
+            }
+        }
+        if (!checkedAny && lastError is not null) throw lastError;
+        return result;
+    }
 
-    /// <summary>Notas da versão nova, publicadas junto com ela (<c>vpk pack --releaseNotes</c>).</summary>
-    public static ReleaseNotes? NotesOf(UpdateInfo update) => ReleaseNotes.Parse(update.TargetFullRelease.NotesMarkdown, Loc.Code);
+    /// <summary>Notas da versão nova, tiradas do texto da release.</summary>
+    public static ReleaseNotes? NotesOf(AvailableUpdate update) => ReleaseNotes.Parse(update.NotesMarkdown, Loc.Code);
 
     /// <summary>Notas desta versão, embutidas no executável (<c>release-notes/X.Y.Z.md</c>).</summary>
     public static ReleaseNotes? CurrentNotes()

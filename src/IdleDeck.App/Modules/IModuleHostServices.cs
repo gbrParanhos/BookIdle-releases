@@ -36,6 +36,9 @@ public interface IModuleHostServices
     /// <summary>A sessão da Kick da conta (do navegador dela), ou null.</summary>
     Task<string?> ChaveKickAsync(string profileName);
 
+    /// <summary>Abre uma página numa janela com a sessão da conta (os logins dela valem ali).</summary>
+    Task AbrirPaginaNaContaAsync(string profileName, string titulo, string url);
+
     /// <summary>Contas, nomes ou o perfil selecionado mudaram: o painel deve se redesenhar.</summary>
     event EventHandler? ContasMudaram;
 }

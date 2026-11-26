@@ -187,7 +187,8 @@ public sealed class LivesPanel : DockPanel
             var grid = Row(board.Accounts.Count);
             Put(grid, 0, Label(line.Channel, 14, bold: line.Live, muted: !line.Live && line.Cells.All(c => !c.Watching)));
             Put(grid, 1, line.Live ? LivePill() : Label(Loc.T("offline"), 12, muted: true));
-            for (var a = 0; a < line.Cells.Count; a++) Put(grid, 2 + a, Right(Balance(line.Cells[a])));
+            for (var a = 0; a < line.Cells.Count; a++)
+                Put(grid, 2 + a, Right(Clickable(Balance(line.Cells[a]), a, line.Channel, board.Accounts[a])));
             rows.Children.Add(Line(grid, i % 2 == 1 ? "HoverGlow" : null));
         }
 
@@ -205,6 +206,21 @@ public sealed class LivesPanel : DockPanel
         var card = new Border { CornerRadius = new CornerRadius(10), Padding = new Thickness(0, 0, 0, 0), Child = rows, ClipToBounds = true };
         card.SetResourceReference(Border.BackgroundProperty, "Card");
         return card;
+    }
+
+    /// <summary>Clicar no saldo abre o canal numa janela logada com aquela conta, para resgatar os pontos.</summary>
+    private UIElement Clickable(UIElement content, int accountIndex, string channel, string login)
+    {
+        var kick = _kick;
+        var box = new Border
+        {
+            Child = content,
+            Background = Brushes.Transparent, // recebe o clique na área toda, não só no texto
+            Cursor = System.Windows.Input.Cursors.Hand,
+            ToolTip = Loc.T("Abrir {0} logado como {1} (para resgatar os pontos)", channel, login),
+        };
+        box.MouseLeftButtonUp += (_, _) => _module.OpenChannel(kick, accountIndex, channel);
+        return box;
     }
 
     /// <summary>Saldo da conta no canal: selo amarelo quando ela está assistindo; traço quando não deu para ler.</summary>
