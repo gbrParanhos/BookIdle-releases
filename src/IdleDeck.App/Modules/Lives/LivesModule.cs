@@ -90,6 +90,7 @@ public sealed class LivesModule(IModuleHostServices host) : IModuleView
         var liveErrors = new List<string>();
         var live = await KickApi.ReadLiveAsync(channels, liveErrors);
         if (liveErrors.Count > 0) errors.Add(Loc.T("Kick: não deu para ver se estão ao vivo: {0}", string.Join(", ", liveErrors)));
+        var missingByPause = 0;
         foreach (var info in host.ContasDasLives().Where(a => a.KickLogin is not null))
         {
             var balances = new Dictionary<string, int?>();
@@ -100,6 +101,11 @@ public sealed class LivesModule(IModuleHostServices host) : IModuleView
                 foreach (var channel in channels)
                 {
                     try { balances[channel] = await KickApi.ReadPointsAsync(token, channel); }
+                    catch (KickBusyException)
+                    {
+                        balances[channel] = null;
+                        missingByPause++;
+                    }
                     catch (Exception e) when (e is HttpRequestException or FormatException or TaskCanceledException)
                     {
                         balances[channel] = null;
@@ -109,6 +115,12 @@ public sealed class LivesModule(IModuleHostServices host) : IModuleView
             }
             accounts.Add(new LiveBoardAccount(info.KickLogin!, balances, info.KickWatching.ToHashSet()));
         }
+        // A Kick barra quando chegam consultas demais (429): o app espera a pausa e mostra os últimos saldos que já leu.
+        var paused = KickApi.PausedFor;
+        if (paused > TimeSpan.Zero)
+            errors.Add(missingByPause > 0
+                ? Loc.T("Kick pediu uma pausa nas consultas; {0} saldo(s) aparecem na próxima atualização (em ~{1} s).", missingByPause, (int)Math.Ceiling(paused.TotalSeconds))
+                : Loc.T("Kick pediu uma pausa nas consultas; mostrando os últimos saldos lidos."));
         return (LiveBoard.Build(channels, live, accounts), errors);
     }
 }
