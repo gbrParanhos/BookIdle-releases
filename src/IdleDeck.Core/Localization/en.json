@@ -7,6 +7,8 @@
   "AO VIVO": "LIVE",
   "Canais da Twitch e da Kick do perfil: quem está ao vivo, quantos pontos cada conta tem em cada canal e o que ela está assistindo (▶).": "The profile's Twitch and Kick channels: who is live, how many points each account has on each channel and what it's watching (▶).",
   "Kick: não deu para ver se estão ao vivo: {0}": "Kick: couldn't check whether they're live: {0}",
+  "Kick pediu uma pausa nas consultas; {0} saldo(s) aparecem na próxima atualização (em ~{1} s).": "Kick asked for a break from requests; {0} balance(s) will show on the next refresh (in ~{1} s).",
+  "Kick pediu uma pausa nas consultas; mostrando os últimos saldos lidos.": "Kick asked for a break from requests; showing the last balances read.",
   "Nenhum canal da Kick neste perfil. ⋯ do perfil → Kick (bônus de live)…": "No Kick channel in this profile. Profile ⋯ → Kick (stream bonus)…",
   "Nenhum canal da Twitch neste perfil. ⋯ do perfil → Twitch (bônus de live)…": "No Twitch channel in this profile. Profile ⋯ → Twitch (stream bonus)…",
   "Nenhuma conta deste perfil está com a Kick conectada: só dá para ver quem está ao vivo.": "No account in this profile has Kick connected: you can only see who is live.",
